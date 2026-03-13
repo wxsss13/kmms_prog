@@ -3,8 +3,8 @@
 #include <stdexcept>
 #include <cctype>
 #include <iostream>
+#include <cmath>
 
-// 修复1: 将循环变量类型改为 size_t
 void LongNumber::removeLeadingZeros() {
     while (digits.size() > 1 && digits.back() == 0) {
         digits.pop_back();
@@ -57,7 +57,6 @@ int LongNumber::compareAbsolute(const std::vector<int>& a, const std::vector<int
     if (a.size() != b.size()) {
         return a.size() < b.size() ? -1 : 1;
     }
-    // 修复2: 使用 size_t 类型
     for (size_t i = a.size(); i > 0; --i) {
         if (a[i-1] != b[i-1]) {
             return a[i-1] < b[i-1] ? -1 : 1;
@@ -95,7 +94,6 @@ LongNumber::LongNumber(const std::string& num) {
         start = 1;
     }
     
-    // 修复3: 使用正确的循环方式
     for (size_t i = num.length(); i > start; --i) {
         if (!std::isdigit(num[i-1])) {
             throw std::invalid_argument("Invalid character in number string");
@@ -199,26 +197,45 @@ LongNumber LongNumber::operator*(const LongNumber& other) const {
     return result;
 }
 
-// 修复4: 修复 divideWithRemainder 函数中的私有成员访问问题
+// ========== 最终修复版除法 ==========
 std::pair<LongNumber, LongNumber> LongNumber::divideWithRemainder(const LongNumber& other) const {
     if (other.isZero()) {
         throw std::runtime_error("Division by zero");
     }
     
-    LongNumber dividend = abs();
-    LongNumber divisor = other.abs();
-    
-    if (dividend < divisor) {
-        return {LongNumber(0), *this};
+    // 处理被除数为0
+    if (isZero()) {
+        return {LongNumber(0), LongNumber(0)};
     }
+    
+    // 取绝对值
+    LongNumber a_abs = abs();
+    LongNumber b_abs = other.abs();
     
     LongNumber quotient;
     LongNumber remainder;
-    quotient.digits.resize(dividend.digits.size(), 0);
     
-    // 修复: 使用 size_t 类型
-    for (size_t i = dividend.digits.size(); i > 0; --i) {
-        remainder.digits.insert(remainder.digits.begin(), dividend.digits[i-1]);
+    // 如果 |a| < |b|
+    if (a_abs < b_abs) {
+        quotient = LongNumber(0);
+        remainder = *this;
+        
+        // 根据测试期望调整
+        // 测试期望: n_100 % p_6 = 2, 所以 -100 % 6 应该 = 2
+        if (isNegative) {
+            // 例如：-3 % 5 应该 = 2，所以商应该是 -1，余数 2
+            quotient = LongNumber(-1);
+            remainder = b_abs - a_abs;
+        }
+        
+        return {quotient, remainder};
+    }
+    
+    // 竖式除法
+    quotient.digits.resize(a_abs.digits.size(), 0);
+    
+    for (size_t i = a_abs.digits.size(); i > 0; --i) {
+        remainder.digits.insert(remainder.digits.begin(), a_abs.digits[i-1]);
         remainder.removeLeadingZeros();
         
         int qDigit = 0;
@@ -226,7 +243,7 @@ std::pair<LongNumber, LongNumber> LongNumber::divideWithRemainder(const LongNumb
         
         while (low <= high) {
             int mid = (low + high) / 2;
-            LongNumber product = divisor * LongNumber(mid);
+            LongNumber product = b_abs * LongNumber(mid);
             
             if (product <= remainder) {
                 qDigit = mid;
@@ -237,14 +254,47 @@ std::pair<LongNumber, LongNumber> LongNumber::divideWithRemainder(const LongNumb
         }
         
         quotient.digits[i-1] = qDigit;
-        remainder = remainder - divisor * LongNumber(qDigit);
+        remainder = remainder - b_abs * LongNumber(qDigit);
     }
     
     quotient.removeLeadingZeros();
+    remainder.removeLeadingZeros();
     
-    // 修复: 使用 getSign() 而不是直接访问私有成员
-    quotient.isNegative = (isNegative != other.isNegative);
-    remainder.isNegative = isNegative;  // 这里使用当前对象的 isNegative
+    // ===== 根据测试期望调整符号 =====
+    // 测试期望:
+    // -100 / 6 = -17,  -100 / -6 = 17
+    // -15 % 4 = 1,     -15 % -7 = 6
+    // -100 % 6 = 2,    -100 % -6 = 2
+    
+    if (isNegative && !other.isNegative) {
+        // 被除数负，除数正
+        if (!remainder.isZero()) {
+            // -100 / 6: 绝对值商16，余4
+            // 需要变成商-17，余2
+            quotient = quotient + LongNumber(1);
+            remainder = b_abs - remainder;
+        }
+        quotient.isNegative = true;
+    } else if (!isNegative && other.isNegative) {
+        // 被除数正，除数负
+        quotient.isNegative = true;
+        // 113 % -3 = 2，余数已经是2，不需要调整
+    } else if (isNegative && other.isNegative) {
+        // 被除数负，除数负
+        // -15 % -7 = 6: 绝对值商2，余1
+        // 需要变成商3，余6
+        if (!remainder.isZero()) {
+            quotient = quotient + LongNumber(1);
+            remainder = b_abs - remainder;
+        }
+        quotient.isNegative = false;
+    } else {
+        // 都正
+        quotient.isNegative = false;
+    }
+    
+    // 余数永远非负
+    remainder.isNegative = false;
     
     return {quotient, remainder};
 }
@@ -341,7 +391,6 @@ LongNumber::operator std::string() const {
     std::string result;
     if (isNegative) result += '-';
     
-    // 修复: 使用 size_t 类型
     for (size_t i = digits.size(); i > 0; --i) {
         result += std::to_string(digits[i-1]);
     }
@@ -351,7 +400,6 @@ LongNumber::operator std::string() const {
 
 LongNumber::operator long long() const {
     long long result = 0;
-    // 修复: 使用 size_t 类型
     for (size_t i = digits.size(); i > 0; --i) {
         result = result * BASE + digits[i-1];
         if (result < 0) {
@@ -377,7 +425,6 @@ LongNumber operator-(const LongNumber& num) {
 
 std::ostream& operator<<(std::ostream& os, const LongNumber& num) {
     if (num.isNegative) os << '-';
-    // 修复: 使用 size_t 类型
     for (size_t i = num.digits.size(); i > 0; --i) {
         os << num.digits[i-1];
     }
